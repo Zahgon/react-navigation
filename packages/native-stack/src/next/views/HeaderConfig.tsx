@@ -1,4 +1,4 @@
-import { Stack } from 'react-native-screens/experimental';
+import { Stack } from 'react-native-screens';
 
 import {
   getHeaderConfigBase,

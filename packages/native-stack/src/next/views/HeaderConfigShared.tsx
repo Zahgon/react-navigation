@@ -1,7 +1,8 @@
 import { getHeaderTitle, HeaderBackContext } from '@react-navigation/elements';
 import { useTheme } from '@react-navigation/native';
 import * as React from 'react';
-import type { StackHeaderConfigProps } from 'react-native-screens/experimental';
+import { Platform } from 'react-native';
+import type { StackHeaderConfigProps } from 'react-native-screens';
 
 import type { NativeStackDescriptor } from '../../types';
 
@@ -27,6 +28,8 @@ export function useHeaderConfig({
     headerBackTitle,
     headerTintColor,
   } = descriptor.options;
+  const tintColor =
+    headerTintColor ?? (Platform.OS === 'ios' ? colors.primary : colors.text);
 
   const hasCustomHeader = header != null;
   const headerTitleText = getHeaderTitle(
@@ -50,7 +53,7 @@ export function useHeaderConfig({
   const headerLeftElement = hasCustomHeader
     ? null
     : headerLeft?.({
-        tintColor: headerTintColor,
+        tintColor,
         canGoBack,
         label: headerBackTitle ?? headerBack?.title,
         href: undefined,
@@ -58,19 +61,18 @@ export function useHeaderConfig({
   const headerTitleElement =
     !hasCustomHeader && typeof headerTitle === 'function'
       ? headerTitle({
-          tintColor: headerTintColor,
+          tintColor,
           children: headerTitleText,
         })
       : null;
   const headerRightElement = hasCustomHeader
     ? null
     : headerRight?.({
-        tintColor: headerTintColor,
+        tintColor,
         canGoBack,
       });
 
   return {
-    colors,
     descriptor,
     hasCustomHeader,
     headerBack,
@@ -79,6 +81,7 @@ export function useHeaderConfig({
     headerTitleElement,
     headerTitleText,
     canGoBack,
+    tintColor,
   };
 }
 
@@ -110,8 +113,3 @@ export function getHeaderConfigBase(
       (usesHeaderLeftElement && options.headerBackVisible !== true),
   };
 }
-
-// The experimental native API does not report header height changes.
-// HeaderHeightContext, AnimatedHeaderHeightContext, and custom iOS header
-// backgrounds therefore keep their initial or measured height when a native
-// large title expands or collapses. REPORT.md tracks all unsupported options.

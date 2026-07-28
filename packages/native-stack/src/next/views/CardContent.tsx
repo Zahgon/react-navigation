@@ -69,18 +69,26 @@ export function CardContent({
     () => new Animated.Value(defaultHeaderHeight)
   );
 
-  const [headerHeight, setHeaderHeight] = React.useState(defaultHeaderHeight);
+  const [measuredHeaderHeight, setMeasuredHeaderHeight] =
+    React.useState<number>();
+  const headerHeight =
+    header == null
+      ? defaultHeaderHeight
+      : (measuredHeaderHeight ?? defaultHeaderHeight);
 
   const headerContainerRef = React.useRef<View>(null);
 
-  // Stable so the layout effect below only runs on mount.
   const updateHeaderHeight = React.useCallback(
     (height: number) => {
       animatedHeaderHeight.setValue(height);
-      setHeaderHeight(height);
+      setMeasuredHeaderHeight(height);
     },
     [animatedHeaderHeight]
   );
+
+  React.useLayoutEffect(() => {
+    animatedHeaderHeight.setValue(headerHeight);
+  }, [animatedHeaderHeight, headerHeight]);
 
   React.useLayoutEffect(() => {
     headerContainerRef.current?.measure((_x, _y, _width, height) => {

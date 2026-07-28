@@ -7,14 +7,13 @@ import {
   type StackHeaderConfigProps,
   type StackHeaderConfigRef,
   type StackHeaderToolbarMenuElementOptionsAndroid,
-} from 'react-native-screens/experimental';
+} from 'react-native-screens';
 
 import type {
   NativeStackHeaderToolbarMenu,
   NativeStackHeaderToolbarMenuElement,
   NativeStackHeaderToolbarMenuElementOptions,
   NativeStackHeaderToolbarMenuGroup,
-  NativeStackHeaderToolbarMenuRef,
 } from '../../types';
 import {
   getHeaderConfigBase,
@@ -33,14 +32,52 @@ type StackHeaderToolbarMenuElementAndroid = NonNullable<
 export function HeaderConfig(props: HeaderConfigProps) {
   const config = useHeaderConfig(props);
   const {
-    colors,
     descriptor: { options },
     hasCustomHeader,
     headerBack,
     headerLeftElement,
     headerRightElement,
     headerTitleElement,
+    tintColor,
   } = config;
+  const toolbarMenu = options.unstable_headerToolbarMenu;
+  const headerConfigRef = React.useRef<StackHeaderConfigRef>(null);
+  const normalIconTintByIdentifierRef = React.useRef(
+    new Map<string, ColorValue>()
+  );
+
+  React.useInsertionEffect(() => {
+    normalIconTintByIdentifierRef.current =
+      getAndroidToolbarMenuNormalIconTints(toolbarMenu?.items, tintColor);
+  }, [toolbarMenu, tintColor]);
+
+  React.useImperativeHandle(
+    toolbarMenu?.ref,
+    () => ({
+      setOptions: (identifier, options) => {
+        const normalIconTint =
+          normalIconTintByIdentifierRef.current.get(identifier) ?? tintColor;
+
+        headerConfigRef.current?.android?.updateToolbarMenuElements({
+          id: identifier,
+          options: getAndroidToolbarMenuElementOptions(
+            options,
+            tintColor,
+            normalIconTint
+          ),
+        });
+
+        if ('iconTintColor' in options) {
+          normalIconTintByIdentifierRef.current.set(
+            identifier,
+            options.iconTintColor ?? tintColor
+          );
+        }
+      },
+    }),
+    [tintColor]
+  );
+
   const usesHeaderLeftElement = headerLeftElement != null;
   const usesHeaderRightElement = headerRightElement != null;
   const headerBackgroundElement =
@@ -49,7 +86,6 @@ export function HeaderConfig(props: HeaderConfigProps) {
     options.headerShown !== false
       ? options.headerBackground()
       : null;
-  const toolbarMenuTintColor = options.headerTintColor ?? colors.text;
   const headerConfig: StackHeaderConfigProps = {
     ...getHeaderConfigBase(config, usesHeaderLeftElement),
     android: {
@@ -80,17 +116,14 @@ export function HeaderConfig(props: HeaderConfigProps) {
         options.headerTintColor ??
         (options.headerBackButtonTintColorPressed != null ||
         options.headerBackButtonTintColorFocused != null
-          ? colors.text
+          ? tintColor
           : undefined),
       backButtonTintColorPressed: options.headerBackButtonTintColorPressed,
       backButtonTintColorFocused: options.headerBackButtonTintColorFocused,
       backButtonIcon:
         options.headerBackIcon == null
           ? undefined
-          : getAndroidIcon(
-              options.headerBackIcon,
-              options.headerTintColor ?? colors.text
-            ),
+          : getAndroidIcon(options.headerBackIcon, tintColor),
       scrollFlagScroll: options.headerScrollFlagScroll,
       scrollFlagEnterAlways: options.headerScrollFlagEnterAlways,
       scrollFlagEnterAlwaysCollapsed:
@@ -98,12 +131,9 @@ export function HeaderConfig(props: HeaderConfigProps) {
       scrollFlagExitUntilCollapsed: options.headerScrollFlagExitUntilCollapsed,
       scrollFlagSnap: options.headerScrollFlagSnap,
       toolbarMenu:
-        options.unstable_headerToolbarMenu == null
+        toolbarMenu == null
           ? undefined
-          : getAndroidToolbarMenu(
-              options.unstable_headerToolbarMenu,
-              toolbarMenuTintColor
-            ),
+          : getAndroidToolbarMenu(toolbarMenu, tintColor),
       toolbarMenuGroupDividerEnabled:
         options.unstable_headerToolbarMenuGroupDividerEnabled,
     },
@@ -112,40 +142,9 @@ export function HeaderConfig(props: HeaderConfigProps) {
   return (
     <>
       {props.children(headerBack)}
-      <HeaderConfigView
-        config={headerConfig}
-        toolbarMenuRef={options.unstable_headerToolbarMenu?.ref}
-        toolbarMenuTintColor={toolbarMenuTintColor}
-      />
+      <Stack.HeaderConfig ref={headerConfigRef} {...headerConfig} />
     </>
   );
-}
-
-function HeaderConfigView({
-  config,
-  toolbarMenuRef,
-  toolbarMenuTintColor,
-}: {
-  config: StackHeaderConfigProps;
-  toolbarMenuRef?: React.Ref<NativeStackHeaderToolbarMenuRef> | undefined;
-  toolbarMenuTintColor: ColorValue;
-}) {
-  const ref = React.useRef<StackHeaderConfigRef>(null);
-
-  React.useImperativeHandle(
-    toolbarMenuRef,
-    () => ({
-      setOptions: (identifier, options) => {
-        ref.current?.android?.setToolbarMenuElementOptions(
-          identifier,
-          getAndroidToolbarMenuElementOptions(options, toolbarMenuTintColor)
-        );
-      },
-    }),
-    [toolbarMenuTintColor]
-  );
-
-  return <Stack.HeaderConfig ref={ref} {...config} />;
 }
 
 function getAndroidIcon(
@@ -258,13 +257,10 @@ function getAndroidToolbarMenuElement(
 
 function getAndroidToolbarMenuElementOptions(
   options: NativeStackHeaderToolbarMenuElementOptions,
-  tintColor: ColorValue
+  tintColor: ColorValue,
+  normalIconTint: ColorValue
 ): StackHeaderToolbarMenuElementOptionsAndroid {
-  const hasIconTintUpdate =
-    'iconTintColor' in options ||
-    'iconTintColorPressed' in options ||
-    'iconTintColorFocused' in options ||
-    'iconTintColorDisabled' in options;
+  const updatesNormalIconTint = 'iconTintColor' in options;
   const hasStateIconTint =
     options.iconTintColorPressed != null ||
     options.iconTintColorFocused != null ||
@@ -289,14 +285,16 @@ function getAndroidToolbarMenuElementOptions(
               : getAndroidIcon(options.icon, tintColor),
         }
       : {}),
-    ...(hasIconTintUpdate
+    ...(updatesNormalIconTint || hasStateIconTint
       ? {
           // Keep the normal icon visible when this update adds a state tint.
           // The native API otherwise replaces the missing normal tint with a
           // transparent color. Remove this fallback when the native header
           // keeps its normal tint by itself.
-          iconTintColorNormal:
-            options.iconTintColor ?? (hasStateIconTint ? tintColor : undefined),
+          iconTintColorNormal: updatesNormalIconTint
+            ? (options.iconTintColor ??
+              (hasStateIconTint ? tintColor : undefined))
+            : normalIconTint,
         }
       : {}),
     ...('iconTintColorPressed' in options
@@ -311,4 +309,20 @@ function getAndroidToolbarMenuElementOptions(
     ...('checked' in options ? { checked: options.checked } : {}),
     ...('menuLabel' in options ? { menuTitle: options.menuLabel } : {}),
   };
+}
+
+function getAndroidToolbarMenuNormalIconTints(
+  items: NativeStackHeaderToolbarMenuElement[] | undefined,
+  tintColor: ColorValue,
+  result = new Map<string, ColorValue>()
+) {
+  for (const item of items ?? []) {
+    result.set(item.identifier, item.iconTintColor ?? tintColor);
+
+    if (item.type === 'menu') {
+      getAndroidToolbarMenuNormalIconTints(item.items, tintColor, result);
+    }
+  }
+
+  return result;
 }

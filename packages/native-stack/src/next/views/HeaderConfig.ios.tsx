@@ -4,7 +4,7 @@ import {
   type StackHeaderConfigProps,
   type StackHeaderMenuElementIOS,
   type StackHeaderMenuIOS,
-} from 'react-native-screens/experimental';
+} from 'react-native-screens';
 
 import type {
   NativeStackHeaderItem,
@@ -33,13 +33,14 @@ export function HeaderConfig(props: HeaderConfigProps) {
     headerTitleElement,
     headerTitleText,
     canGoBack,
+    tintColor,
   } = config;
   const renderElementOption = (
     option: NativeStackNavigationOptions['headerSubtitle']
   ) =>
     !hasCustomHeader && typeof option === 'function'
       ? option({
-          tintColor: options.headerTintColor,
+          tintColor,
           children: '',
         })
       : null;
@@ -51,13 +52,13 @@ export function HeaderConfig(props: HeaderConfigProps) {
   const nativeHeaderLeftItems = hasCustomHeader
     ? undefined
     : options.unstable_headerLeftItems?.({
-        tintColor: options.headerTintColor,
+        tintColor,
         canGoBack,
       });
   const nativeHeaderRightItems = hasCustomHeader
     ? undefined
     : options.unstable_headerRightItems?.({
-        tintColor: options.headerTintColor,
+        tintColor,
         canGoBack,
       });
   const usesHeaderLeftElement =

@@ -1,193 +1,209 @@
-import type { Route } from '@react-navigation/native';
+import type {
+  ParamListBase,
+  Route,
+  StackNavigationState,
+} from '@react-navigation/native';
+import * as React from 'react';
 
-export type NativeStackViewState<Descriptor> = {
+import type {
+  NativeStackDescriptor,
+  NativeStackDescriptorMap,
+} from '../../types';
+
+export type NativeStackViewState = {
   previous: {
     index: number;
     routes: Route<string>[];
-    descriptors: Record<string, Descriptor>;
   };
   renderedRoutes: Route<string>[];
-  popped: {
-    route: Route<string>;
-    descriptor: Descriptor | undefined;
-    // Key of the route that was rendered below this route when it was popped,
-    // used to keep its position in the route group tree stable while it
-    // animates out.
-    anchorKey: string | undefined;
-  }[];
-  nativelyDismissedRouteKeys: string[];
+  poppedByKey: Map<
+    string,
+    {
+      descriptor: NativeStackDescriptor;
+      previousDescriptor: NativeStackDescriptor | undefined;
+    }
+  >;
+  nativelyDismissedRouteKeys: Set<string>;
 };
 
-export type NativeStackViewStateAction<Descriptor> =
+type NativeStackViewStateAction =
   | {
       type: 'SYNC_STATE';
       index: number;
       routes: Route<string>[];
-      descriptors: Record<string, Descriptor>;
     }
   | { type: 'REMOVE_POPPED_ROUTE'; key: string }
   | { type: 'ADD_NATIVELY_DISMISSED_ROUTES'; keys: string[] };
 
-export function createNativeStackViewState<Descriptor>({
-  index,
-  routes,
-  descriptors,
-}: {
-  index: number;
-  routes: Route<string>[];
-  descriptors: Record<string, Descriptor>;
-}): NativeStackViewState<Descriptor> {
-  return {
-    previous: { index, routes, descriptors },
-    renderedRoutes: routes,
-    popped: [],
-    nativelyDismissedRouteKeys: [],
-  };
-}
-
-export function nativeStackViewReducer<Descriptor>(
-  state: NativeStackViewState<Descriptor>,
-  action: NativeStackViewStateAction<Descriptor>
-): NativeStackViewState<Descriptor> {
+export function reducer(
+  state: NativeStackViewState,
+  action: NativeStackViewStateAction,
+  descriptors: NativeStackDescriptorMap
+): NativeStackViewState {
   switch (action.type) {
     case 'SYNC_STATE': {
       const routeKeys = new Set(action.routes.map((route) => route.key));
-      const nativelyDismissedRouteKeys = new Set(
-        state.nativelyDismissedRouteKeys
-      );
-      const poppedByKey = new Map(
-        state.popped.map((popped) => [popped.route.key, popped])
-      );
+
+      const poppedByKey = new Map(state.poppedByKey);
 
       for (const key of routeKeys) {
         // A route may be added again before its native pop finishes.
         poppedByKey.delete(key);
       }
 
-      if (action.routes !== state.previous.routes) {
-        const previousActiveRoutes = state.previous.routes.slice(
-          0,
-          state.previous.index + 1
-        );
-        const renderedIndexByKey = new Map(
-          state.renderedRoutes.map((route, index) => [route.key, index])
-        );
+      const previousActiveRoutes = state.previous.routes.slice(
+        0,
+        state.previous.index + 1
+      );
 
-        for (const route of previousActiveRoutes) {
-          if (
-            routeKeys.has(route.key) ||
-            poppedByKey.has(route.key) ||
-            nativelyDismissedRouteKeys.has(route.key)
-          ) {
-            continue;
-          }
+      for (const [index, route] of previousActiveRoutes.entries()) {
+        const descriptor = descriptors[route.key];
 
-          const renderedIndex = renderedIndexByKey.get(route.key);
+        if (
+          descriptor == null ||
+          routeKeys.has(route.key) ||
+          poppedByKey.has(route.key) ||
+          state.nativelyDismissedRouteKeys.has(route.key)
+        ) {
+          continue;
+        }
 
-          poppedByKey.set(route.key, {
-            route,
-            descriptor:
-              action.descriptors[route.key] ??
-              state.previous.descriptors[route.key],
-            anchorKey:
-              renderedIndex == null
-                ? undefined
-                : state.renderedRoutes[renderedIndex - 1]?.key,
-          });
+        const previousRoute = previousActiveRoutes[index - 1];
+
+        poppedByKey.set(route.key, {
+          descriptor,
+          previousDescriptor:
+            previousRoute == null ? undefined : descriptors[previousRoute.key],
+        });
+      }
+
+      // Current navigation state defines the new order. Popped routes are
+      // inserted back at their previous boundaries so consecutive pops keep
+      // their native stack order, while new routes stay underneath the routes
+      // animating out.
+      const poppedRoutesBeforeKey = new Map<
+        string | undefined,
+        Route<string>[]
+      >();
+      let nextRouteKey: string | undefined;
+
+      for (let index = state.renderedRoutes.length - 1; index >= 0; index--) {
+        const route = state.renderedRoutes[index];
+
+        if (route == null) {
+          continue;
+        }
+
+        if (routeKeys.has(route.key)) {
+          nextRouteKey = route.key;
+        } else if (poppedByKey.has(route.key)) {
+          const poppedRoutes = poppedRoutesBeforeKey.get(nextRouteKey) ?? [];
+
+          poppedRoutes.unshift(route);
+          poppedRoutesBeforeKey.set(nextRouteKey, poppedRoutes);
         }
       }
 
-      const renderedRoutes = reconcileRenderedRoutes(
-        state.renderedRoutes,
-        action.routes,
-        new Set(poppedByKey.keys())
-      );
-      const popped = renderedRoutes.flatMap((route) => {
-        const entry = poppedByKey.get(route.key);
-
-        return entry == null ? [] : [entry];
-      });
-      const nextNativelyDismissedRouteKeys =
-        state.nativelyDismissedRouteKeys.filter((key) => routeKeys.has(key));
+      const renderedRoutes = action.routes
+        .flatMap((route) => [
+          ...(poppedRoutesBeforeKey.get(route.key) ?? []),
+          route,
+        ])
+        .concat(poppedRoutesBeforeKey.get(undefined) ?? []);
 
       return {
         previous: {
           index: action.index,
           routes: action.routes,
-          descriptors: action.descriptors,
         },
         renderedRoutes,
-        popped,
-        nativelyDismissedRouteKeys: nextNativelyDismissedRouteKeys,
+        poppedByKey,
+        nativelyDismissedRouteKeys: new Set(),
       };
     }
 
     case 'REMOVE_POPPED_ROUTE': {
-      const popped = state.popped.filter(
-        (popped) => popped.route.key !== action.key
-      );
+      if (!state.poppedByKey.has(action.key)) {
+        return state;
+      }
 
-      return popped.length === state.popped.length
-        ? state
-        : {
-            ...state,
-            renderedRoutes: state.renderedRoutes.filter(
-              (route) => route.key !== action.key
-            ),
-            popped,
-          };
+      const poppedByKey = new Map(state.poppedByKey);
+
+      poppedByKey.delete(action.key);
+
+      return {
+        ...state,
+        renderedRoutes: state.renderedRoutes.filter(
+          (route) => route.key !== action.key
+        ),
+        poppedByKey,
+      };
     }
 
     case 'ADD_NATIVELY_DISMISSED_ROUTES': {
-      const dismissedRouteKeys = new Set(state.nativelyDismissedRouteKeys);
-      const keys = action.keys.filter((key) => !dismissedRouteKeys.has(key));
+      const nativelyDismissedRouteKeys = new Set(
+        state.nativelyDismissedRouteKeys
+      );
+      let changed = false;
 
-      return keys.length === 0
-        ? state
-        : {
-            ...state,
-            nativelyDismissedRouteKeys: [
-              ...state.nativelyDismissedRouteKeys,
-              ...keys,
-            ],
-          };
+      for (const key of action.keys) {
+        if (!nativelyDismissedRouteKeys.has(key)) {
+          nativelyDismissedRouteKeys.add(key);
+          changed = true;
+        }
+      }
+
+      if (!changed) {
+        return state;
+      }
+
+      return {
+        ...state,
+        nativelyDismissedRouteKeys,
+      };
     }
   }
 }
 
-function reconcileRenderedRoutes(
-  previousRenderedRoutes: Route<string>[],
-  routes: Route<string>[],
-  poppedRouteKeys: Set<string>
-) {
-  // Current navigation state defines the new order. Popped routes are inserted
-  // back at their previous boundaries so consecutive pops keep their native
-  // stack order, while new routes stay underneath the routes animating out.
-  const routesByKey = new Map(routes.map((route) => [route.key, route]));
-  const poppedRoutesBeforeKey = new Map<string | undefined, Route<string>[]>();
-  let nextRouteKey: string | undefined;
+export function useViewState({
+  state,
+  descriptors,
+}: {
+  state: StackNavigationState<ParamListBase>;
+  descriptors: NativeStackDescriptorMap;
+}) {
+  const descriptorsRef = React.useRef(descriptors);
 
-  for (let index = previousRenderedRoutes.length - 1; index >= 0; index--) {
-    const route = previousRenderedRoutes[index];
+  React.useInsertionEffect(() => {
+    descriptorsRef.current = descriptors;
+  }, [descriptors]);
 
-    if (route == null) {
-      continue;
+  const [view, dispatch] = React.useReducer(
+    (
+      view: NativeStackViewState,
+      action: NativeStackViewStateAction
+    ): NativeStackViewState => reducer(view, action, descriptorsRef.current),
+    {
+      previous: {
+        index: state.index,
+        routes: state.routes,
+      },
+      renderedRoutes: state.routes,
+      poppedByKey: new Map(),
+      nativelyDismissedRouteKeys: new Set<string>(),
     }
+  );
 
-    if (routesByKey.has(route.key)) {
-      nextRouteKey = route.key;
-    } else if (poppedRouteKeys.has(route.key)) {
-      const poppedRoutes = poppedRoutesBeforeKey.get(nextRouteKey) ?? [];
-
-      poppedRoutes.unshift(route);
-      poppedRoutesBeforeKey.set(nextRouteKey, poppedRoutes);
-    }
+  if (
+    state.index !== view.previous.index ||
+    state.routes !== view.previous.routes
+  ) {
+    dispatch({
+      type: 'SYNC_STATE',
+      index: state.index,
+      routes: state.routes,
+    });
   }
 
-  return routes
-    .flatMap((route) => [
-      ...(poppedRoutesBeforeKey.get(route.key) ?? []),
-      route,
-    ])
-    .concat(poppedRoutesBeforeKey.get(undefined) ?? []);
+  return [view, dispatch] as const;
 }
